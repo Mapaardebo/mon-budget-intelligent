@@ -138,14 +138,20 @@ with tab1:
                 df_new = pd.DataFrame(final_list, columns=['Date', 'Article', 'Prix', 'Categorie'])
                 df_new.to_csv(NOM_CSV, mode='a', index=False, header=not os.path.exists(NOM_CSV), sep=';', encoding='utf-8-sig')
                 
-                # Apprentissage auto discret
+               # Apprentissage auto discret (Version sécurisée)
                 for row in final_list:
-                    mot = row[1].split()[0]
-                    if len(mot) > 3 and mot not in st.session_state.memoire[row[3]]:
-                        st.session_state.memoire[row[3]].append(mot)
-                sauvegarder_memoire(st.session_state.memoire)
+                    categorie_nom = row[3]
+                    article_nom = row[1]
+                    
+                    # On vérifie si la catégorie existe bien dans notre dictionnaire
+                    if categorie_nom in st.session_state.memoire:
+                        mots = article_nom.split()
+                        if mots:
+                            mot = mots[0]
+                            if len(mot) > 3 and mot not in st.session_state.memoire[categorie_nom]:
+                                st.session_state.memoire[categorie_nom].append(mot)
                 
-                st.success(f"✅ {len(final_list)} articles enregistrés !")
+                sauvegarder_memoire(st.session_state.memoire)
             
             # On nettoie la session
             del st.session_state.temp_items
