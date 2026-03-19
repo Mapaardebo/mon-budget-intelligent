@@ -16,7 +16,11 @@ st.title("🛒 Mon Assistant Budget")
 NOM_DICT = 'mon_dictionnaire.json'
 NOM_CSV = 'mon_budget.csv'
 
-# Dictionnaire par défaut
+# Liste des mots à ignorer automatiquement (Ex: Infos magasin, dates, etc.)
+# NOUVEAU : On ajoute les mots parasites récurrents
+MOTS_INTERDITS = ["STATION", "RUE", "AVENUE", "BOULEVARD", "TEL:", "MERCI", "REVOIR", "TOTAL", "CB", "VISA", "TICKET", "SIRET", "DATE"]
+
+# Dictionnaire par défaut avec tes 11 catégories
 DICT_INITIAL = {
     "FRUITS": ["POMME", "BANANE", "ORANGE", "PINK", "LADY"],
     "LÉGUMES": ["CAROTTE", "TOMATE", "COURGETTE", "SALADE", "CRISE"],
@@ -81,74 +85,103 @@ with tab1:
                                 trouve = True; break
                         if not trouve: lignes[y] = [text]
                 
-                # Traitement des données
+                # Traitement des données avec filtres
                 new_data = []
                 for y in sorted(lignes.keys()):
                     phrase = " ".join(lignes[y]).upper()
+                    
+                    # NOUVEAU : On ignore si un mot interdit est présent
+                    if any(mot in phrase for mot in MOTS_INTERDITS):
+                        continue
+
                     match = re.search(r'(\d+)[\s.,](\d{2})\b', phrase)
                     if match:
                         prix = float(f"{match.group(1)}.{match.group(2)}")
                         nom = phrase.replace(match.group(0), "").strip()
+                        
+                        # Filtre : On ignore les lignes sans texte significatif
                         if len(nom) > 3:
                             # Tentative de classification auto
                             cat_trouvee = "INCONNU"
                             for cat, mots in st.session_state.memoire.items():
                                 if any(m in nom for m in mots):
                                     cat_trouvee = cat; break
+                            
                             new_data.append({"Article": nom, "Prix": prix, "Cat": cat_trouvee})
                 
                 st.session_state.temp_items = new_data
 
-    # Si des articles ont été détectés, on demande validation
-    if 'temp_items' in st.session_state:
+    # --- NOUVELLE INTERFACE DE VALIDATION AVEC SUPPRESSION ---
+    if 'temp_items' in st.session_state and len(st.session_state.temp_items) > 0:
         st.subheader("Validation des articles")
-        final_list = []
-        with st.form("form_validation"):
-            for i, item in enumerate(st.session_state.temp_items):
-                col1, col2, col3 = st.columns([3, 1, 2])
-                with col1:
-                    nom_art = st.text_input("Article", item['Article'], key=f"n_{i}")
-                with col2:
-                    prix_art = st.number_input("Prix", value=item['Prix'], key=f"p_{i}")
-                with col3:
-                    options = list(st.session_state.memoire.keys())
-                    index_defaut = options.index(item['Cat']) if item['Cat'] in options else len(options)-1
-                    cat_art = st.selectbox("Catégorie", options, index=index_defaut, key=f"c_{i}")
-                final_list.append([datetime.now().strftime("%d/%m/%Y"), nom_art, prix_art, cat_art])
+        st.info("Décochez les lignes qui ne sont pas des articles (ex: adresse, date...)")
+        
+        # On utilise st.data_editor pour une validation plus propre
+        df_items = pd.DataFrame(st.session_state.temp_items)
+        # On ajoute une colonne de validation
+        df_items.insert(0, "Garder", True)
+        
+        # Affichage de l'éditeur de données
+        edited_df = st.data_editor(df_items, use_container_width=True, num_rows="dynamic")
+        
+        if st.button("Enregistrer la sélection"):
+            # Filtrage des lignes décochées
+            valid_items = edited_df[edited_df["Garder"] == True]
             
-            if st.form_submit_button("Enregistrer dans le Budget"):
+            if not valid_items.empty:
+                # Préparation pour la sauvegarde CSV
+                final_list = []
+                for _, row in valid_items.iterrows():
+                    final_list.append([datetime.now().strftime("%d/%m/%Y"), row['Article'], row['Prix'], row['Cat']])
+                
                 # Sauvegarde CSV
                 df_new = pd.DataFrame(final_list, columns=['Date', 'Article', 'Prix', 'Categorie'])
                 df_new.to_csv(NOM_CSV, mode='a', index=False, header=not os.path.exists(NOM_CSV), sep=';', encoding='utf-8-sig')
                 
-                # Apprentissage auto (mise à jour du dico)
+                # Apprentissage auto discret
                 for row in final_list:
                     mot = row[1].split()[0]
                     if len(mot) > 3 and mot not in st.session_state.memoire[row[3]]:
                         st.session_state.memoire[row[3]].append(mot)
                 sauvegarder_memoire(st.session_state.memoire)
                 
-                st.success("✅ Ticket enregistré !")
-                del st.session_state.temp_items
+                st.success(f"✅ {len(final_list)} articles enregistrés !")
+            
+            # On nettoie la session
+            del st.session_state.temp_items
+            st.rerun()
 
 with tab2:
     st.header("Analyse de vos dépenses")
-    if os.path.exists(NOM_CSV):
-        df = pd.read_csv(NOM_CSV, sep=';', encoding='utf-8-sig')
-        df['Date'] = pd.to_datetime(df['Date'], dayfirst=True)
-        
-        # Résumé par catégorie
-        st.subheader("Répartition par catégorie")
-        recap = df.groupby('Categorie')['Prix'].sum().sort_values(ascending=False)
-        st.bar_chart(recap)
-        
-        # Tableau complet
-        st.subheader("Historique des achats")
-        st.dataframe(df.sort_values('Date', ascending=False))
-        
-        # Bouton pour effacer (optionnel)
-        if st.button("Effacer tout l'historique"):
-            os.remove(NOM_CSV)
-            st.rerun()
+    if os.path.exists(NOM_CSV) and os.path.getsize(NOM_CSV) > 0:
+        try:
+            df = pd.read_csv(NOM_CSV, sep=';', encoding='utf-8-sig')
+            
+            # Conversion flexible des dates
+            df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+            df['Prix'] = pd.to_numeric(df['Prix'], errors='coerce')
+            df = df.dropna(subset=['Date', 'Prix'])
+            
+            if not df.empty:
+                # Résumé par catégorie
+                st.subheader("Répartition par catégorie")
+                recap = df.groupby('Categorie')['Prix'].sum().sort_values(ascending=False)
+                st.bar_chart(recap)
+                
+                # Tableau complet
+                st.subheader("Historique des achats")
+                st.dataframe(df.sort_values('Date', ascending=False))
+                
+                # Bouton pour effacer
+                if st.button("Effacer tout l'historique"):
+                    os.remove(NOM_CSV)
+                    st.rerun()
+            else:
+                st.info("Aucune donnée valide trouvée.")
+        except Exception as e:
+            st.error(f"Erreur de lecture : {e}")
+            if st.button("Réinitialiser le fichier budget"):
+                os.remove(NOM_CSV)
+                st.rerun()
     else:
         st.info("Aucune donnée enregistrée pour le moment. Allez dans l'onglet Scanner !")
