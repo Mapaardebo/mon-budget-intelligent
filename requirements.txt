@@ -3,3 +3,5 @@ easyocr
 pandas
 matplotlib
 opencv-python-headless
+Pillow
+numpy
