@@ -19,10 +19,10 @@ NOM_CSV = 'mon_budget.csv'
 # Mots à ignorer (Infos magasin)
 MOTS_INTERDITS = ["STATION", "RUE", "AVENUE", "BOULEVARD", "TEL:", "MERCI", "REVOIR", "TOTAL", "CB", "VISA", "TICKET", "SIRET", "DATE", "MAGASIN"]
 
-# NOUVEAU : Mots indiquant une réduction (Ajout de NUTRI-BOOST)
+# Mots indiquant une réduction
 MOTS_REDUCTIONS = ["REMISE", "REDUC", "PROMO", "ESCOMPTE", "RABAIS", "BON ", "AVOIR", "DEDUCTION", "NUTRI-BOOST", "NUTRI BOOST"]
 
-# Dictionnaire complet
+# Dictionnaire complet avec la nouvelle catégorie REMISES
 DICT_INITIAL = {
     "FRUITS": ["POMME", "BANANE", "ORANGE", "PINK", "LADY"],
     "LÉGUMES": ["CAROTTE", "TOMATE", "COURGETTE", "SALADE", "CRISE"],
@@ -35,6 +35,7 @@ DICT_INITIAL = {
     "BOISSONS ALCOOLISÉES": ["VIN", "BIERE"],
     "HYGIÈNE CORPORELLE": ["SAVON", "DENTIFRICE", "SHAMPOOING"],
     "ENTRETIEN DE LA MAISON": ["LESSIVE", "PAIC", "SOPALIN"],
+    "REMISES": ["REMISE", "REDUC", "PROMO", "NUTRI-BOOST", "AVOIR"], # Nouvelle catégorie
     "AUTRE": []
 }
 
@@ -91,26 +92,26 @@ with tab1:
                     phrase = " ".join(lignes[y]).upper()
                     if any(mot in phrase for mot in MOTS_INTERDITS): continue
 
-                    # Regex pour capturer le prix et d'éventuels signes moins
                     match = re.search(r'(-?\d+)[\s.,](\d{2})(-?)\b', phrase)
                     if match:
                         valeur = f"{match.group(1)}.{match.group(2)}"
                         prix = float(valeur)
                         
-                        # Vérification si c'est une réduction (signe ou mot-clé)
-                        est_reduction = (match.group(3) == "-" or 
-                                       "-" in match.group(1) or 
-                                       any(r in phrase for r in MOTS_REDUCTIONS))
+                        # Détection réduction
+                        est_reduction = (match.group(3) == "-" or "-" in match.group(1) or any(r in phrase for r in MOTS_REDUCTIONS))
                         
-                        if est_reduction and prix > 0:
-                            prix = -prix
+                        if est_reduction and prix > 0: prix = -prix
                         
                         nom = phrase.replace(match.group(0), "").strip()
                         if len(nom) > 3:
-                            cat_trouvee = "INCONNU"
-                            for cat, mots in st.session_state.memoire.items():
-                                if any(m in nom for m in mots):
-                                    cat_trouvee = cat; break
+                            # Priorité à la catégorie REMISES si c'est une réduction
+                            cat_trouvee = "REMISES" if est_reduction else "INCONNU"
+                            
+                            if cat_trouvee == "INCONNU":
+                                for cat, mots in st.session_state.memoire.items():
+                                    if any(m in nom for m in mots):
+                                        cat_trouvee = cat; break
+                            
                             new_data.append({"Article": nom, "Prix": prix, "Cat": cat_trouvee})
                 
                 st.session_state.temp_items = new_data
@@ -157,15 +158,13 @@ with tab2:
         if not df.empty:
             st.metric("Total Dépensé (net)", f"{round(df['Prix'].sum(), 2)} €")
             
-            st.subheader("Total par catégorie")
+            st.subheader("Impact par catégorie")
             recap = df.groupby('Categorie')['Prix'].sum().sort_values(ascending=False)
             st.bar_chart(recap)
             
-            st.subheader("Détails")
+            st.subheader("Historique")
             st.dataframe(df.sort_values('Date', ascending=False), use_container_width=True)
             
             if st.button("Effacer l'historique"):
                 os.remove(NOM_CSV)
                 st.rerun()
-    else:
-        st.info("Scannez un ticket pour commencer !")
